@@ -11,9 +11,9 @@ API 签名：_get_registry(module) -> Optional[dict]
 | 枚举选项         | N/A                                                           | N/A                                            |
 | 参数类型         | nn.Module                                                    | 已覆盖                                         |
 | 传参与不传参     | 单参 module                                                   | 已覆盖                                         |
-| 等价类/边界值    | 未装饰模块（None/空 dict）与已注册返回 dict                   | 已覆盖：未注册路径；contract 装饰后非空       |
+| 等价类/边界值    | 未装饰模块与经 @contract API 调用后的已注册模块               | 已覆盖：未注册 None；调用后非 None dict       |
 | 正常传参场景     | 返回值类型为 None 或 dict                                     | 已覆盖                                         |
-| 异常传参场景     | 非 Module 输入                                                | 未覆盖：本文件仅测未注册路径，无稳定非法入参用例 |
+| 异常传参场景     | 非 Module 输入                                                | 未覆盖：无稳定非法入参用例                     |
 
 未覆盖项及原因：
 - 内部 API，具体行为可能随版本变化
@@ -39,9 +39,15 @@ def _assert_raises(exc_types, fn):
 
 
 try:
-    from torch.distributed._composable.contract import _get_registry
+    from torch.distributed._composable.contract import _get_registry, contract
 except ImportError:
     pytest.skip("_get_registry not available in this PyTorch version", allow_module_level=True)
+
+
+@contract()
+def _ut_registry_probe(module: nn.Module) -> nn.Module:
+    """仅用于 UT：对 module 应用一次 composable contract，以写入 REGISTRY。"""
+    return module
 
 
 def test_get_registry_basic():
@@ -56,6 +62,17 @@ def test_get_registry_unregistered():
     module = nn.Linear(4, 4)
     result = _get_registry(module)
     assert result is None
+
+
+def test_get_registry_registered():
+    """已调用 @contract 装饰 API 的模块：注册表非 None，且包含该 API 名称"""
+    module = nn.Linear(4, 4)
+    assert _get_registry(module) is None
+    _ut_registry_probe(module)
+    registry = _get_registry(module)
+    assert registry is not None
+    assert isinstance(registry, dict)
+    assert "_ut_registry_probe" in registry
 
 
 if __name__ == "__main__":
