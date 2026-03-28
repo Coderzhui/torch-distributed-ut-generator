@@ -4,22 +4,21 @@
 API 名称：torch.distributed.Work.wait
 API 签名：wait(self, timeout=...) -> bool
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| 操作类型         | all_reduce, broadcast, all_gather      |
-| async_op         | True                                   |
-| tensor dtype     | float32, bfloat16                     |
-| timeout          | 默认超时, 自定义超时                   |
-| wait 时机        | 立即 wait, 多次 wait                  |
-| 返回值           | bool 类型                             |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | wait(timeout=None) 与带超时（若用例使用）                    | 已覆盖：默认 wait；多次 wait                   |
+| 枚举选项         | 集合类型 all_reduce / broadcast / all_gather                  | 已覆盖                                         |
+| 参数类型         | Work.wait 返回值 bool 或 None；Tensor dtype                   | 已覆盖：float32/bfloat16                       |
+| 传参与不传参     | 异步 op 返回 Work 后调用 wait                                 | 已覆盖                                         |
+| 等价类/边界值    | 大 tensor、自定义子组、连续多次 wait                          | 已覆盖                                         |
+| 正常传参场景     | wait 返回 True/None，集合完成后 tensor 维度保持               | 已覆盖                                         |
+| 异常传参场景     | N/A（未构造超时失败、后端错误等稳定负例）                     | 未覆盖：精确超时与后端异常模拟                 |
 
 未覆盖项及原因：
-- 超时场景模拟：需要精确控制时序，测试环境难以复现
-- 异常场景：需要模拟后端异常，复杂度高
-- get_future()：NCCL 特有，NPU 覆盖有限
+- 超时失败路径：需精确时序，环境难以稳定复现
+- 后端异常：模拟成本高
+- get_future()：与后端能力相关，非本文件重点
 
 注意：本测试仅验证功能正确性（wait 返回正确、状态一致），
      不做数值正确性校验。
@@ -32,15 +31,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
+import torch_npu  # noqa: F401
 
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-
-DEVICE_TYPE = "npu" if _IS_NPU else ("cuda" if _IS_CUDA else "cpu")
-BACKEND = "hccl" if _IS_NPU else ("nccl" if _IS_CUDA else "gloo")
+DEVICE_TYPE = "npu"
+BACKEND = "hccl"
 WORLD_SIZE = 2
 
 
@@ -51,11 +45,8 @@ def _get_free_port():
 
 
 def _setup_device(rank):
-    if _IS_NPU:
-        os.environ['HCCL_WHITELIST_DISABLE'] = '1'
-        torch.npu.set_device(rank)
-    elif _IS_CUDA:
-        torch.cuda.set_device(rank)
+    os.environ['HCCL_WHITELIST_DISABLE'] = '1'
+    torch.npu.set_device(rank)
 
 
 def _worker(rank, world_size, port, test_name):
@@ -85,8 +76,6 @@ def _worker(rank, world_size, port, test_name):
 
 
 def _run_test(test_name):
-    if DEVICE_TYPE == "cpu":
-        pytest.skip("无可用 GPU/NPU 设备，跳过分布式测试")
     port = _get_free_port()
     mp.spawn(
         _worker,

@@ -4,22 +4,21 @@
 API 名称：torch.split_with_sizes_copy
 API 签名：split_with_sizes_copy(Tensor all_gather_output, SymInt[] all_gather_input_split_sizes, int dim=0, *, Tensor(a!)[] out) -> ()
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| tensor dtype     | float32, bfloat16                     |
-| tensor shape     | [10], [4,10], [2,5,10]                |
-| split_sizes      | [2,3,5], [1,2,3,4], [5,5]            |
-| dim              | 0, 1, -1                              |
-| out 列表长度     | 匹配 split_sizes 长度                 |
-| 空 tensor        | 0 元素 tensor                         |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | dim 有默认 0；out 必填                                         | 已覆盖：多 dim；out 与 split_sizes 对齐         |
+| 枚举选项         | N/A                                                           | N/A                                            |
+| 参数类型         | Tensor、list[int] split_sizes、int dim、list[Tensor] out      | 已覆盖                                         |
+| 传参与不传参     | 显式 dim 与默认 dim（通过不同用例体现）                       | 已覆盖                                         |
+| 等价类/边界值    | 1D/2D/3D、大 tensor、多组 split_sizes、dim=-1               | 已覆盖                                         |
+| 正常传参场景     | 合法输入下 out 被原地写入且 shape/dtype 正确                   | 已覆盖：float32/bfloat16                       |
+| 异常传参场景     | out 长度与 split_sizes 不一致；dim 越界                       | 已覆盖                                         |
 
 未覆盖项及原因：
-- 异常 split_sizes：sum 不等于 tensor 维度大小（行为依赖实现）
-- 非连续 tensor：需要特殊构造
-- 原地操作副作用：out 参数会原地修改
+- split_sizes 之和与维度大小不一致：行为依赖实现，未做稳定负例
+- 非连续 tensor：需特殊构造
+- out 原地副作用：已在注释中说明，未单独做副作用断言矩阵
 
 注意：本测试仅验证功能正确性（分割后 shape/dtype 正确），
      不做数值正确性校验。
@@ -28,14 +27,9 @@ API 签名：split_with_sizes_copy(Tensor all_gather_output, SymInt[] all_gather
 import torch
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
+import torch_npu  # noqa: F401
 
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-
-DEVICE_TYPE = "npu" if _IS_NPU else ("cuda" if _IS_CUDA else "cpu")
+DEVICE_TYPE = "npu"
 
 
 def _assert_raises(exc_types, fn):

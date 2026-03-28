@@ -4,17 +4,19 @@
 API 名称：torch.distributed.device_mesh._get_device_handle
 API 签名：_get_device_handle(device_type: str) -> Optional[module]
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| device_type      | "cuda", "npu", "invalid"             |
-| 返回值           | DeviceHandle 对象或 None               |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | device_type 为 str，无 None 语义；区分合法与非法字符串        | 已覆盖：非法 device_type；合法路径见正常场景    |
+| 枚举选项         | N/A（非固定枚举字符串）                                       | N/A                                            |
+| 参数类型         | device_type: str                                            | 已覆盖                                         |
+| 传参与不传参     | 单必填参数 device_type                                        | 已覆盖：传入 "npu"                             |
+| 等价类/边界值    | 合法 "npu" 与非法字符串                                       | 已覆盖                                         |
+| 正常传参场景     | 合法输入下返回非 None 的 device 模块句柄                      | 已覆盖：_get_device_handle("npu")              |
+| 异常传参场景     | 非法 device_type 返回 None                                    | 已覆盖：invalid_device                         |
 
 未覆盖项及原因：
-- 内部 API，具体行为可能随版本变化
-- 特定设备类型需要对应硬件支持
+- 内部 API，行为可能随 PyTorch 版本变化；未对 torch 内部实现做版本矩阵测试
 
 注意：本测试仅验证功能正确性，
      不做数值正确性校验。
@@ -23,13 +25,7 @@ API 签名：_get_device_handle(device_type: str) -> Optional[module]
 import torch
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
-
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-
+import torch_npu  # noqa: F401
 
 try:
     from torch.distributed.device_mesh import _get_device_handle
@@ -38,13 +34,8 @@ except ImportError:
 
 
 def test_get_device_handle_supported_device():
-    """获取当前可用设备（CUDA 或 NPU）的 device handle"""
-    if _IS_CUDA:
-        assert _get_device_handle("cuda") is not None
-    elif _IS_NPU:
-        assert _get_device_handle("npu") is not None
-    else:
-        pytest.skip("No CUDA or NPU device available")
+    """获取 NPU device handle（本 UT 仅 NPU 环境）"""
+    assert _get_device_handle("npu") is not None
 
 
 def test_get_device_handle_invalid():

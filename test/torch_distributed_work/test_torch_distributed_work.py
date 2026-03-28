@@ -12,22 +12,21 @@ API 签名：Work 类的核心方法
   - synchronize()
   - boxed() -> ScriptObject
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| 操作类型         | all_reduce, broadcast, all_gather      |
-| async_op         | True, False                            |
-| tensor dtype     | float32, bfloat16                     |
-| wait 行为        | 立即 wait, 延迟 wait, 超时 wait        |
-| is_completed     | 操作完成前后                           |
-| Work 类型        | 正常 Work, FakeWork                    |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | 异步 Work 与同步路径（async_op=False 返回 None）              | 已覆盖                                         |
+| 枚举选项         | ReduceOp、集合类型（all_reduce/broadcast/all_gather）         | 已覆盖：多种集合与 op                          |
+| 参数类型         | Tensor、bool(async_op)、ProcessGroup（子组）                  | 已覆盖                                         |
+| 传参与不传参     | 各 API 默认与显式参数组合                                     | 已覆盖                                         |
+| 等价类/边界值    | float32/bfloat16、多并发 Work、自定义子组                   | 已覆盖                                         |
+| 正常传参场景     | wait/synchronize、is_completed 兼容断言、isend/irecv+source_rank | 已覆盖                                         |
+| 异常传参场景     | N/A（本文件以功能路径为主，未构造稳定分布式失败）             | 未覆盖：exception() 等需模拟失败场景           |
 
 未覆盖项及原因：
-- exception() 异常返回：需要模拟失败场景，测试环境难以复现
-- get_future()：仅 NCCL 后端支持，NPU 覆盖有限
-- boxed()/unbox()：内部 API，不建议在 UT 中直接使用
+- exception()：需模拟集合失败，环境难以稳定复现
+- get_future()：与后端能力相关，NPU/HCCL 覆盖有限
+- boxed()/unbox()：内部 API，不在 UT 中直接使用
 
 注意：本测试仅验证功能正确性（Work 对象状态正确），
      不做数值正确性校验。
@@ -41,15 +40,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
+import torch_npu  # noqa: F401
 
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-
-DEVICE_TYPE = "npu" if _IS_NPU else ("cuda" if _IS_CUDA else "cpu")
-BACKEND = "hccl" if _IS_NPU else ("nccl" if _IS_CUDA else "gloo")
+DEVICE_TYPE = "npu"
+BACKEND = "hccl"
 WORLD_SIZE = 2
 
 
@@ -60,11 +54,8 @@ def _get_free_port():
 
 
 def _setup_device(rank):
-    if _IS_NPU:
-        os.environ['HCCL_WHITELIST_DISABLE'] = '1'
-        torch.npu.set_device(rank)
-    elif _IS_CUDA:
-        torch.cuda.set_device(rank)
+    os.environ['HCCL_WHITELIST_DISABLE'] = '1'
+    torch.npu.set_device(rank)
 
 
 def _worker(rank, world_size, port, test_name):
@@ -100,8 +91,6 @@ def _worker(rank, world_size, port, test_name):
 
 
 def _run_test(test_name):
-    if DEVICE_TYPE == "cpu":
-        pytest.skip("无可用 GPU/NPU 设备，跳过分布式测试")
     port = _get_free_port()
     mp.spawn(
         _worker,

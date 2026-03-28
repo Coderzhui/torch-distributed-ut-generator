@@ -4,23 +4,21 @@
 API 名称：tensor.copy_
 API 签名：copy_(self, other, non_blocking=False) -> Tensor
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| tensor dtype     | float32, bfloat16, int32              |
-| tensor shape     | [4], [4,4], [2,3,4]                  |
-| non_blocking     | True, False                           |
-| src/dst dtype    | 相同, 不同（隐式转换）                |
-| src/dst device   | 相同 device                           |
-| 连续 copy        | 多次 copy 调用                        |
-| 原地操作         | 返回 self                             |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | other 必填；non_blocking 有默认 False                         | 已覆盖：non_blocking True/False                 |
+| 枚举选项         | N/A                                                           | N/A                                            |
+| 参数类型         | other 为 Tensor；non_blocking 为 bool                         | 已覆盖；异常路径覆盖非 Tensor                  |
+| 传参与不传参     | copy_(other) 与 copy_(other, non_blocking=...)               | 已覆盖                                         |
+| 等价类/边界值    | 1D/2D/3D、大 tensor、连续多次 copy、多 dtype                 | 已覆盖：float32/bfloat16/int32                 |
+| 正常传参场景     | 同 device 下复制后 shape/dtype 正确、返回 self               | 已覆盖                                         |
+| 异常传参场景     | other 非 Tensor；src/dst shape 不一致                         | 已覆盖                                         |
 
 未覆盖项及原因：
-- 跨设备 copy：需要在多设备环境测试，测试复杂度高
+- 跨设备 copy：需多设备环境，复杂度高
 - float16：精度验证非本测试目的
-- 非连续 tensor：需要特殊构造
+- 非连续 tensor：需特殊构造，本 UT 未覆盖
 
 注意：本测试仅验证功能正确性（复制后 shape/dtype 正确），
      不做数值正确性校验。
@@ -29,14 +27,9 @@ API 签名：copy_(self, other, non_blocking=False) -> Tensor
 import torch
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
+import torch_npu  # noqa: F401
 
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-
-DEVICE_TYPE = "npu" if _IS_NPU else ("cuda" if _IS_CUDA else "cpu")
+DEVICE_TYPE = "npu"
 
 
 def _assert_raises(exc_types, fn):

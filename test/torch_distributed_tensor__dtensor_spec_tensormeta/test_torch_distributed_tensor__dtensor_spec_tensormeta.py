@@ -4,21 +4,19 @@
 API 名称：torch.distributed.tensor._dtensor_spec.TensorMeta
 API 签名：TensorMeta(shape: torch.Size, stride: tuple[int, ...], dtype: torch.dtype)
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| shape            | (), (4,), (4,4), (2,3,4)             |
-| stride           | 默认, 自定义                           |
-| dtype            | float32, bfloat16, int32              |
-| 创建方式         | 直接构造, 从 tensor 构造              |
-| 属性访问         | shape, stride, dtype                  |
-| 相等性           | 相等, 不相等                          |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | N/A（shape/stride/dtype 均必填）                             | N/A                                            |
+| 枚举选项         | N/A                                                           | N/A                                            |
+| 参数类型         | torch.Size、tuple[int,...] stride、torch.dtype               | 已覆盖；错误类型触发 TypeError                 |
+| 传参与不传参     | TensorMeta(...) 全参构造                                      | 已覆盖；from_tensor 类方法                     |
+| 等价类/边界值    | 标量/1D/2D/3D shape、不同 stride、多 dtype                   | 已覆盖：float32/bfloat16/int32                 |
+| 正常传参场景     | 属性访问与相等性比较                                          | 已覆盖                                         |
+| 异常传参场景     | 非法 stride 长度等与类型错误                                  | 已覆盖                                         |
 
 未覆盖项及原因：
-- 异常 shape/stride：类型错误场景已覆盖
-- 数值正确性：非本测试目的
+- 数值语义验证：非本测试目的
 
 注意：本测试仅验证功能正确性（属性访问正确、类型正确），
      不做数值正确性校验。
@@ -26,6 +24,8 @@ API 签名：TensorMeta(shape: torch.Size, stride: tuple[int, ...], dtype: torch
 
 import torch
 import pytest
+
+import torch_npu  # noqa: F401
 
 from torch.distributed.tensor._dtensor_spec import TensorMeta
 

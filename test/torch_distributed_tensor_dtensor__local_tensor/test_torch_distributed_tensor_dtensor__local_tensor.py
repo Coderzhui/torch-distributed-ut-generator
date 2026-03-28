@@ -4,22 +4,21 @@
 API 名称：torch.distributed.tensor.DTensor._local_tensor
 API 签名：_local_tensor 属性，返回本地张量
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| device_type      | cuda, npu                             |
-| placements       | Replicate, Shard(0), Shard(1)         |
-| tensor dtype     | float32, bfloat16                     |
-| tensor shape     | [8], [4,4], [2,4]                    |
-| 创建方式         | from_local, distribute_tensor         |
-| 访问次数         | 多次访问 _local_tensor                |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | mesh/placements 等构造参数无 None 主路径                      | 已覆盖：合法 DeviceMesh + placements           |
+| 枚举选项         | Placement：Replicate、Shard(0)、Shard(1)                      | 已覆盖                                         |
+| 参数类型         | DTensor、DeviceMesh、placement 列表、dtype                    | 已覆盖：float32/bfloat16                       |
+| 传参与不传参     | from_local / distribute_tensor 等创建路径                     | 已覆盖                                         |
+| 等价类/边界值    | 1D/2D shape、多次读取 _local_tensor                           | 已覆盖                                         |
+| 正常传参场景     | _local_tensor 返回本地 Tensor，shape/dtype 合理               | 已覆盖                                         |
+| 异常传参场景     | N/A（未构造非法 mesh/placement 稳定异常）                     | 未覆盖：复杂非法组合依赖版本                   |
 
 未覆盖项及原因：
-- Partial placement：仅部分 shard 的场景较复杂
-- N dim > 2：已覆盖 2D 场景
-- _local_tensor 写操作：属性为只读，写操作可能导致未定义行为
+- Partial placement：场景较复杂，本 UT 未展开
+- 高维 >2：以 2D 为主，更高维未系统覆盖
+- _local_tensor 写操作：属性语义只读，不测未定义写行为
 
 注意：本测试仅验证功能正确性（返回本地 tensor 正确），
      不做数值正确性校验。
@@ -32,20 +31,12 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import pytest
 
-_IS_NPU = hasattr(torch, 'npu') and torch.npu.is_available()
-_IS_CUDA = not _IS_NPU and torch.cuda.is_available()
+import torch_npu  # noqa: F401
+from torch.distributed.tensor import DeviceMesh
+from torch.distributed.tensor.placement_types import Replicate, Shard
 
-if _IS_NPU:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-    from torch.distributed.tensor import DeviceMesh
-    from torch.distributed.tensor.placement_types import Replicate, Shard
-else:
-    from torch.distributed.device_mesh import DeviceMesh
-    from torch.distributed.tensor.placement_types import Replicate, Shard
-
-DEVICE_TYPE = "npu" if _IS_NPU else ("cuda" if _IS_CUDA else "cpu")
-BACKEND = "hccl" if _IS_NPU else ("nccl" if _IS_CUDA else "gloo")
+DEVICE_TYPE = "npu"
+BACKEND = "hccl"
 WORLD_SIZE = 2
 
 
@@ -56,11 +47,8 @@ def _get_free_port():
 
 
 def _setup_device(rank):
-    if _IS_NPU:
-        os.environ['HCCL_WHITELIST_DISABLE'] = '1'
-        torch.npu.set_device(rank)
-    elif _IS_CUDA:
-        torch.cuda.set_device(rank)
+    os.environ['HCCL_WHITELIST_DISABLE'] = '1'
+    torch.npu.set_device(rank)
 
 
 def _worker(rank, world_size, port, test_name):
@@ -92,8 +80,6 @@ def _worker(rank, world_size, port, test_name):
 
 
 def _run_test(test_name):
-    if DEVICE_TYPE == "cpu":
-        pytest.skip("无可用 GPU/NPU 设备，跳过分布式测试")
     port = _get_free_port()
     mp.spawn(
         _worker,

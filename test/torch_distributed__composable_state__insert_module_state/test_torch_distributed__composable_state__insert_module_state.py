@@ -4,19 +4,20 @@
 API 名称：torch.distributed._composable_state._insert_module_state
 API 签名：_insert_module_state(module, state) -> None
 
-覆盖维度：
-+------------------+----------------------------------------+
-| 维度             | 覆盖值                                 |
-+------------------+----------------------------------------+
-| module 类型      | Linear, Sequential, ModuleList         |
-| state 类型       | FSDPState, Custom State               |
-| module 结构      | 单层, 多层嵌套                        |
-| state 访问       | 通过 _composable_state 获取           |
-+------------------+----------------------------------------+
+覆盖维度表：
+| 覆盖维度         | 说明                                                         | 覆盖情况                                       |
+|------------------|--------------------------------------------------------------|------------------------------------------------|
+| 空/非空          | module、state 必填                                            | 已覆盖                                         |
+| 枚举选项         | N/A                                                           | N/A                                            |
+| 参数类型         | nn.Module、ComposableState 协议对象                         | 已覆盖：Linear/Sequential/ModuleList + state   |
+| 传参与不传参     | _insert_module_state(module, state) 双参                      | 已覆盖                                         |
+| 等价类/边界值    | 单层子模块、嵌套 Sequential、重复插入覆盖                     | 已覆盖                                         |
+| 正常传参场景     | 插入后 _get_module_state 可取回一致类型                       | 已覆盖                                         |
+| 异常传参场景     | 非法 module/state 类型                                        | 已覆盖：部分 TypeError 路径                    |
 
 未覆盖项及原因：
-- 内部 API，行为可能变化
-- 特定 state 类型需要完整分布式环境
+- 内部 API，行为可能随版本变化
+- 依赖完整 FSDP 分布式路径的状态：本文件以 composable state 单测为主
 
 注意：本测试仅验证功能正确性（状态插入和获取正确），
      不做数值正确性校验。
@@ -25,6 +26,8 @@ API 签名：_insert_module_state(module, state) -> None
 import torch
 import torch.nn as nn
 import pytest
+
+import torch_npu  # noqa: F401
 
 try:
     from torch.distributed._composable_state import _insert_module_state, _get_module_state
