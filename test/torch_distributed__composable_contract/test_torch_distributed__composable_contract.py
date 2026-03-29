@@ -1,51 +1,88 @@
 # -*- coding: utf-8 -*-
 """
-测试目的：验证 torch.distributed._composable.contract 装饰器的功能正确性
-API 名称：torch.distributed._composable.contract
-API 签名：contract(state_cls: type = _State) -> Callable
+测试目的：验证 torch.distributed._composable.contract.contract 装饰器行为
+API 名称：torch.distributed._composable.contract.contract
+API 签名：contract(state_cls=_State) -> 装饰器，装饰 (module, *args) -> module
 
 覆盖维度表：
 | 覆盖维度         | 说明                                                         | 覆盖情况                                       |
 |------------------|--------------------------------------------------------------|------------------------------------------------|
-| 空/非空          | contract(state_cls=...) 默认 _State                           | 已覆盖：contract() 无参                        |
-| 枚举选项         | N/A                                                           | N/A                                            |
-| 参数类型         | state_cls 为 type                                            | 已覆盖：默认 _State                            |
-| 传参与不传参     | contract() 与 contract(state_cls=...)                       | 已覆盖：无参调用                               |
-| 等价类/边界值    | 返回可调用装饰器工厂                                          | 已覆盖                                         |
-| 正常传参场景     | 可导入、可调用、返回装饰器函数                                | 已覆盖                                         |
-| 异常传参场景     | N/A（未构造稳定非法 state_cls 负例）                         | 未覆盖：非法类型行为依赖版本                   |
+| 空/非空          | state_cls 默认与自定义                                       | 已覆盖默认 _State                              |
+| 枚举选项         | N/A                                                          | N/A                                            |
+| 参数类型         | nn.Module / list[nn.Module]                                  | 已覆盖 Module 与 list                          |
+| 传参与不传参     | @contract() 无参                                             | 已覆盖                                         |
+| 等价类/边界值    | 单子模块、多子模块列表                                       | 已覆盖                                         |
+| 正常传参场景     | 装饰后具备 .state(module)；返回仍为 Module                   | 已覆盖                                         |
+| 异常传参场景     | N/A                                                          | 未覆盖                                         |
 
 未覆盖项及原因：
-- 内部 API，行为可能随 PyTorch 版本变化
-- 装饰器真实作用于模块并参与分布式：需完整多进程环境，本文件仅做可导入与工厂行为校验
+- FQN 破坏类异常：构造成本高，未覆盖
 
-注意：本测试仅验证功能正确性，
-     不做数值正确性校验。
+注意：本测试仅验证 API 结构与状态挂载，不做数值校验。
 """
 
-import torch
-import pytest
+import unittest
 
-import torch_npu  # noqa: F401
+import torch
+import torch.nn as nn
 
 try:
-    from torch.distributed._composable import contract
-    from torch.distributed._composable_state import _State
+    import torch_npu  # noqa: F401
+    from torch_npu.contrib import transfer_to_npu  # noqa: F401
 except ImportError:
-    pytest.skip("contract not available in this PyTorch version", allow_module_level=True)
+    pass
+
+try:
+    from torch_npu.testing.testcase import TestCase, run_tests
+except ImportError:
+    import sys
+    from unittest import TestCase
+
+    def run_tests():
+        unittest.main(argv=sys.argv)
+
+from torch.distributed._composable.contract import contract
+from torch.distributed._composable_state import _State
 
 
-def test_contract_importable():
-    """验证 contract 可导入"""
-    assert contract is not None
-    assert callable(contract)
+class _CustomState(_State):
+    pass
 
 
-def test_contract_returns_callable():
-    """验证 contract 返回可调用对象"""
-    result = contract()
-    assert callable(result)
+class TestDistributedContract(TestCase):
+    def test_contract_default_state_module(self):
+        @contract()
+        def api(m: nn.Module) -> nn.Module:
+            api.state(m).tag = 1
+            return m
+
+        m = nn.Linear(4, 4)
+        out = api(m)
+        self.assertIs(out, m)
+        st = api.state(m)
+        self.assertIsInstance(st, _State)
+        self.assertEqual(getattr(st, "tag", None), 1)
+
+    def test_contract_custom_state_cls(self):
+        @contract(_CustomState)
+        def api2(m: nn.Module) -> nn.Module:
+            self.assertIsInstance(api2.state(m), _CustomState)
+            return m
+
+        m = nn.Linear(2, 2)
+        api2(m)
+        self.assertIsInstance(api2.state(m), _CustomState)
+
+    def test_contract_list_modules(self):
+        @contract()
+        def api3(modules):
+            return modules
+
+        a = nn.Linear(3, 3)
+        b = nn.Linear(3, 3)
+        out = api3([a, b])
+        self.assertIsInstance(out, (list, tuple))
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    run_tests()

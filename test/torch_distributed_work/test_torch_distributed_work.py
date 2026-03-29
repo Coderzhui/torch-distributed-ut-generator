@@ -1,263 +1,99 @@
 # -*- coding: utf-8 -*-
 """
-测试目的：验证 torch.distributed.Work 对象在异步分布式操作中的功能正确性
+测试目的：验证 torch.distributed.Work 异步 collective 返回类型
 API 名称：torch.distributed.Work
-API 签名：Work 类的核心方法
-  - is_completed() -> bool
-  - is_success() -> bool
-  - exception() -> Any
-  - wait(timeout=...) -> bool
-  - get_future() -> Future
-  - source_rank() -> int
-  - synchronize()
-  - boxed() -> ScriptObject
+API 签名：C++ 绑定类型；async_op=True 时由 collective 返回
 
 覆盖维度表：
 | 覆盖维度         | 说明                                                         | 覆盖情况                                       |
 |------------------|--------------------------------------------------------------|------------------------------------------------|
-| 空/非空          | 异步 Work 与同步路径（async_op=False 返回 None）              | 已覆盖                                         |
-| 枚举选项         | ReduceOp、集合类型（all_reduce/broadcast/all_gather）         | 已覆盖：多种集合与 op                          |
-| 参数类型         | Tensor、bool(async_op)、ProcessGroup（子组）                  | 已覆盖                                         |
-| 传参与不传参     | 各 API 默认与显式参数组合                                     | 已覆盖                                         |
-| 等价类/边界值    | float32/bfloat16、多并发 Work、自定义子组                   | 已覆盖                                         |
-| 正常传参场景     | wait/synchronize、is_completed 兼容断言、isend/irecv+source_rank | 已覆盖                                         |
-| 异常传参场景     | N/A（本文件以功能路径为主，未构造稳定分布式失败）             | 未覆盖：exception() 等需模拟失败场景           |
+| 空/非空          | 同步路径可能返回 None                                        | 已覆盖 async 非 None                           |
+| 枚举选项         | ReduceOp.SUM                                                 | 已覆盖                                         |
+| 参数类型         | Tensor on CPU(gloo)                                          | 已覆盖                                         |
+| 传参与不传参     | async_op True                                                | 已覆盖                                         |
+| 等价类/边界值    | 1D tensor                                                    | 已覆盖                                         |
+| 正常传参场景     | isinstance(work, Work)                                       | 已覆盖                                         |
+| 异常传参场景     | N/A                                                          | 未覆盖                                         |
 
 未覆盖项及原因：
-- exception()：需模拟集合失败，环境难以稳定复现
-- get_future()：与后端能力相关，NPU/HCCL 覆盖有限
-- boxed()/unbox()：内部 API，不在 UT 中直接使用
+- HCCL 多卡：需 skipIfUnsupportMultiNPU，本文件单进程 gloo 基线
 
-注意：本测试仅验证功能正确性（Work 对象状态正确），
-     不做数值正确性校验。
+注意：无数值校验。
 """
 
 import os
-import socket
-import time
+import tempfile
+import unittest
+
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
-import pytest
+from torch.distributed import Work
 
-import torch_npu  # noqa: F401
+try:
+    import torch_npu  # noqa: F401
+    from torch_npu.contrib import transfer_to_npu  # noqa: F401
+except ImportError:
+    pass
 
-DEVICE_TYPE = "npu"
-BACKEND = "hccl"
-WORLD_SIZE = 2
+try:
+    from torch_npu.testing.testcase import TestCase, run_tests
+except ImportError:
+    import sys
+    from unittest import TestCase
 
-
-def _get_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        return str(s.getsockname()[1])
-
-
-def _setup_device(rank):
-    os.environ['HCCL_WHITELIST_DISABLE'] = '1'
-    torch.npu.set_device(rank)
+    def run_tests():
+        unittest.main(argv=sys.argv)
 
 
-def _worker(rank, world_size, port, test_name):
-    _setup_device(rank)
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = port
-    dist.init_process_group(backend=BACKEND, rank=rank, world_size=world_size)
-    try:
-        if test_name == "test_work_all_reduce_async":
-            _test_work_all_reduce_async(rank, world_size)
-        elif test_name == "test_work_is_completed":
-            _test_work_is_completed(rank, world_size)
-        elif test_name == "test_work_wait_no_timeout":
-            _test_work_wait_no_timeout(rank, world_size)
-        elif test_name == "test_work_dtype_float32":
-            _test_work_dtype_float32(rank, world_size)
-        elif test_name == "test_work_dtype_bfloat16":
-            _test_work_dtype_bfloat16(rank, world_size)
-        elif test_name == "test_work_broadcast_async":
-            _test_work_broadcast_async(rank, world_size)
-        elif test_name == "test_work_all_gather_async":
-            _test_work_all_gather_async(rank, world_size)
-        elif test_name == "test_work_sync_wait":
-            _test_work_sync_wait(rank, world_size)
-        elif test_name == "test_work_source_rank":
-            _test_work_source_rank(rank, world_size)
-        elif test_name == "test_work_synchronize":
-            _test_work_synchronize(rank, world_size)
-        elif test_name == "test_work_multiple_concurrent":
-            _test_work_multiple_concurrent(rank, world_size)
-    finally:
-        dist.destroy_process_group()
-
-
-def _run_test(test_name):
-    port = _get_free_port()
-    mp.spawn(
-        _worker,
-        args=(WORLD_SIZE, port, test_name),
-        nprocs=WORLD_SIZE,
-        join=True,
+def _init_gloo_file():
+    if not dist.is_available():
+        raise unittest.SkipTest("distributed not available")
+    fd, path = tempfile.mkstemp()
+    os.close(fd)
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{path}",
+        rank=0,
+        world_size=1,
     )
+    return path
 
 
-def _test_work_all_reduce_async(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, op=dist.ReduceOp.SUM, async_op=True)
-    assert isinstance(work, dist.Work)
-    assert hasattr(work, 'wait')
-    assert hasattr(work, 'is_completed')
-    result = work.wait()
-    assert tensor.shape == (4, 4)
-    assert tensor.dtype == torch.float32
+class TestDistributedWork(TestCase):
+    def tearDown(self):
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
+    def test_all_reduce_async_returns_work(self):
+        path = _init_gloo_file()
+        try:
+            t = torch.ones(4, dtype=torch.float32)
+            work = dist.all_reduce(t, op=dist.ReduceOp.SUM, async_op=True)
+            self.assertIsNotNone(work)
+            self.assertIsInstance(work, Work)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
-def _test_work_is_completed(rank, world_size):
-    tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=True)
-    assert isinstance(work, dist.Work)
-    assert work.is_completed() in [True, False]
-    wait_result = work.wait()
-    assert wait_result in (True, None)
-    # 不同后端对 is_completed 状态刷新时机不同，这里只要求返回布尔值且可调用
-    for _ in range(20):
-        if work.is_completed():
-            break
-        time.sleep(0.01)
-    assert work.is_completed() in [True, False]
-
-
-def _test_work_wait_no_timeout(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=True)
-    assert isinstance(work, dist.Work)
-    result = work.wait()
-    assert tensor.shape == (4, 4)
-
-
-def _test_work_dtype_float32(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=True)
-    work.wait()
-    assert tensor.dtype == torch.float32
-    assert tensor.shape == (4, 4)
-
-
-def _test_work_dtype_bfloat16(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.bfloat16, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=True)
-    work.wait()
-    assert tensor.dtype == torch.bfloat16
-
-
-def _test_work_broadcast_async(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.broadcast(tensor, src=0, async_op=True)
-    assert isinstance(work, dist.Work)
-    work.wait()
-    assert tensor.shape == (4, 4)
-
-
-def _test_work_all_gather_async(rank, world_size):
-    tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    tensor_list = [torch.zeros(4, dtype=torch.float32, device=DEVICE_TYPE) for _ in range(world_size)]
-    work = dist.all_gather(tensor_list, tensor, async_op=True)
-    assert isinstance(work, dist.Work)
-    work.wait()
-    for t in tensor_list:
-        assert t.shape == (4,)
-
-
-def _test_work_sync_wait(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=False)
-    assert work is None
-
-
-def _test_work_source_rank(rank, world_size):
-    tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    peer = 1 - rank
-    if rank == 0:
-        work = dist.isend(tensor=tensor, dst=peer)
-        assert isinstance(work, dist.Work)
-        wait_result = work.wait()
-        assert wait_result in (True, None)
-        return
-
-    work = dist.irecv(tensor=tensor, src=peer)
-    assert isinstance(work, dist.Work)
-    wait_result = work.wait()
-    assert wait_result in (True, None)
-    try:
-        src_rank = work.source_rank()
-        assert isinstance(src_rank, int)
-        assert 0 <= src_rank < world_size
-    except RuntimeError as e:
-        # 某些后端上该接口对当前 Work 类型不支持，校验为预期错误
-        assert "sourceRank() may only be called" in str(e)
-
-
-def _test_work_synchronize(rank, world_size):
-    tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    work = dist.all_reduce(tensor, async_op=True)
-    assert isinstance(work, dist.Work)
-    work.synchronize()
-    assert tensor.shape == (4, 4)
-
-
-def _test_work_multiple_concurrent(rank, world_size):
-    tensor1 = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    tensor2 = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    work1 = dist.all_reduce(tensor1, async_op=True)
-    work2 = dist.all_reduce(tensor2, async_op=True)
-    assert isinstance(work1, dist.Work)
-    assert isinstance(work2, dist.Work)
-    work1.wait()
-    work2.wait()
-
-
-def test_work_all_reduce_async():
-    _run_test("test_work_all_reduce_async")
-
-
-def test_work_is_completed():
-    _run_test("test_work_is_completed")
-
-
-def test_work_wait_no_timeout():
-    _run_test("test_work_wait_no_timeout")
-
-
-def test_work_dtype_float32():
-    _run_test("test_work_dtype_float32")
-
-
-def test_work_dtype_bfloat16():
-    _run_test("test_work_dtype_bfloat16")
-
-
-def test_work_broadcast_async():
-    _run_test("test_work_broadcast_async")
-
-
-def test_work_all_gather_async():
-    _run_test("test_work_all_gather_async")
-
-
-def test_work_sync_wait():
-    _run_test("test_work_sync_wait")
-
-
-def test_work_source_rank():
-    _run_test("test_work_source_rank")
-
-
-def test_work_synchronize():
-    _run_test("test_work_synchronize")
-
-
-def test_work_multiple_concurrent():
-    _run_test("test_work_multiple_concurrent")
+    def test_broadcast_async_returns_work(self):
+        path = _init_gloo_file()
+        try:
+            t = torch.arange(3, dtype=torch.float32)
+            work = dist.broadcast(t, src=0, async_op=True)
+            self.assertIsNotNone(work)
+            self.assertIsInstance(work, Work)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    run_tests()

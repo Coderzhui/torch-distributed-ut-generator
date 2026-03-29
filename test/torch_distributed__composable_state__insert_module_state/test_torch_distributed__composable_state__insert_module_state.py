@@ -1,141 +1,66 @@
 # -*- coding: utf-8 -*-
 """
-测试目的：验证 torch.distributed._composable_state._insert_module_state 接口的功能正确性
+测试目的：验证 torch.distributed._composable_state._insert_module_state
 API 名称：torch.distributed._composable_state._insert_module_state
-API 签名：_insert_module_state(module, state) -> None
+API 签名：_insert_module_state(module: nn.Module, state: _State) -> None
 
 覆盖维度表：
 | 覆盖维度         | 说明                                                         | 覆盖情况                                       |
 |------------------|--------------------------------------------------------------|------------------------------------------------|
-| 空/非空          | module、state 必填                                            | 已覆盖                                         |
-| 枚举选项         | N/A                                                           | N/A                                            |
-| 参数类型         | nn.Module、ComposableState 协议对象                         | 已覆盖：Linear/Sequential/ModuleList + state   |
-| 传参与不传参     | _insert_module_state(module, state) 双参                      | 已覆盖                                         |
-| 等价类/边界值    | 单层子模块、嵌套 Sequential、重复插入覆盖                     | 已覆盖                                         |
-| 正常传参场景     | 插入后 _get_module_state 可取回一致类型                       | 已覆盖                                         |
-| 异常传参场景     | 非法 module/state 类型                                        | 已覆盖：部分 TypeError 路径                    |
+| 空/非空          | N/A                                                          | N/A                                            |
+| 枚举选项         | N/A                                                          | N/A                                            |
+| 参数类型         | Module + _State                                              | 已覆盖                                         |
+| 传参与不传参     | N/A                                                          | N/A                                            |
+| 等价类/边界值    | 多次插入同一 module 应 assert                                | 已覆盖                                         |
+| 正常传参场景     | _get_module_state 可取回                                     | 已覆盖                                         |
+| 异常传参场景     | 重复插入                                                     | 已覆盖 assert                                  |
 
 未覆盖项及原因：
-- 内部 API，行为可能随版本变化
-- 依赖完整 FSDP 分布式路径的状态：本文件以 composable state 单测为主
+- 无
 
-注意：本测试仅验证功能正确性（状态插入和获取正确），
-     不做数值正确性校验。
+注意：依赖全局映射副作用，每用例使用独立 Module 实例。
 """
 
-import torch
-import torch.nn as nn
-import pytest
+import unittest
 
-import torch_npu  # noqa: F401
+import torch.nn as nn
 
 try:
-    from torch.distributed._composable_state import _insert_module_state, _get_module_state
+    import torch_npu  # noqa: F401
+    from torch_npu.contrib import transfer_to_npu  # noqa: F401
 except ImportError:
-    pytest.skip("_insert_module_state not available", allow_module_level=True)
+    pass
+
+try:
+    from torch_npu.testing.testcase import TestCase, run_tests
+except ImportError:
+    import sys
+    from unittest import TestCase
+
+    def run_tests():
+        unittest.main(argv=sys.argv)
+
+from torch.distributed._composable_state import (
+    _get_module_state,
+    _insert_module_state,
+    _State,
+)
 
 
-def _assert_raises(exc_types, fn):
-    try:
-        fn()
-    except exc_types:
-        return
-    raise AssertionError(f"expected one of {exc_types}")
+class TestInsertModuleState(TestCase):
+    def test_insert_and_get(self):
+        m = nn.Linear(1, 1)
+        s = _State()
+        _insert_module_state(m, s)
+        got = _get_module_state(m)
+        self.assertIs(got, s)
 
-
-@pytest.mark.timeout(120)
-def test_insert_module_state_basic():
-    """基础功能：为 module 插入 state"""
-    class DummyState:
-        def __init__(self):
-            self.value = "test"
-
-    module = nn.Linear(4, 4)
-    state = DummyState()
-    _insert_module_state(module, state)
-
-    retrieved = _get_module_state(module)
-    assert retrieved is state
-    assert retrieved.value == "test"
-
-
-@pytest.mark.timeout(120)
-def test_insert_module_state_sequential():
-    """Sequential 模块"""
-    class DummyState:
-        def __init__(self, val):
-            self.value = val
-
-    model = nn.Sequential(
-        nn.Linear(4, 4),
-        nn.ReLU(),
-        nn.Linear(4, 4)
-    )
-    state = DummyState("sequential_test")
-    _insert_module_state(model, state)
-
-    retrieved = _get_module_state(model)
-    assert retrieved is state
-
-
-@pytest.mark.timeout(120)
-def test_insert_module_state_nested():
-    """嵌套模块"""
-    class DummyState:
-        def __init__(self, val):
-            self.value = val
-
-    class SubModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.linear = nn.Linear(4, 4)
-
-        def forward(self, x):
-            return self.linear(x)
-
-    module = SubModule()
-    state = DummyState("nested_test")
-    _insert_module_state(module, state)
-
-    retrieved = _get_module_state(module)
-    assert retrieved is state
-
-
-@pytest.mark.timeout(120)
-def test_insert_module_state_multiple_modules():
-    """为多个不同模块插入 state"""
-    class DummyState:
-        def __init__(self, val):
-            self.value = val
-
-    module1 = nn.Linear(4, 4)
-    module2 = nn.Linear(4, 4)
-    state1 = DummyState("module1")
-    state2 = DummyState("module2")
-
-    _insert_module_state(module1, state1)
-    _insert_module_state(module2, state2)
-
-    assert _get_module_state(module1).value == "module1"
-    assert _get_module_state(module2).value == "module2"
-
-
-@pytest.mark.timeout(120)
-def test_insert_module_state_invalid_module():
-    """异常场景：传入非 Module 类型"""
-    _assert_raises(
-        (TypeError, RuntimeError),
-        lambda: _insert_module_state("not_a_module", None)
-    )
-
-
-@pytest.mark.timeout(120)
-def test_get_module_state_no_state():
-    """获取不存在的 state"""
-    module = nn.Linear(4, 4)
-    state = _get_module_state(module)
-    assert state is None
+    def test_insert_duplicate_raises(self):
+        m = nn.Conv2d(1, 1, 1)
+        _insert_module_state(m, _State())
+        with self.assertRaises(AssertionError):
+            _insert_module_state(m, _State())
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    run_tests()

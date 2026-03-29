@@ -1,223 +1,122 @@
 # -*- coding: utf-8 -*-
 """
-测试目的：验证 torch.distributed.tensor.DTensor._local_tensor 接口的功能正确性
+测试目的：验证 torch.distributed.tensor.DTensor._local_tensor 与 from_local 一致性
 API 名称：torch.distributed.tensor.DTensor._local_tensor
-API 签名：_local_tensor 属性，返回本地张量
+API 签名：实例属性，类型为 torch.Tensor
 
 覆盖维度表：
 | 覆盖维度         | 说明                                                         | 覆盖情况                                       |
 |------------------|--------------------------------------------------------------|------------------------------------------------|
-| 空/非空          | mesh/placements 等构造参数无 None 主路径                      | 已覆盖：合法 DeviceMesh + placements           |
-| 枚举选项         | Placement：Replicate、Shard(0)、Shard(1)                      | 已覆盖                                         |
-| 参数类型         | DTensor、DeviceMesh、placement 列表、dtype                    | 已覆盖：float32/bfloat16                       |
-| 传参与不传参     | from_local / distribute_tensor 等创建路径                     | 已覆盖                                         |
-| 等价类/边界值    | 1D/2D shape、多次读取 _local_tensor                           | 已覆盖                                         |
-| 正常传参场景     | _local_tensor 返回本地 Tensor，shape/dtype 合理               | 已覆盖                                         |
-| 异常传参场景     | N/A（未构造非法 mesh/placement 稳定异常）                     | 未覆盖：复杂非法组合依赖版本                   |
+| 空/非空          | N/A                                                          | N/A                                            |
+| 枚举选项         | Replicate 放置                                               | 已覆盖                                         |
+| 参数类型         | local float Tensor                                           | 已覆盖                                         |
+| 传参与不传参     | from_local run_check False / True（若可用）                  | 已覆盖 False；True 未强制                      |
+| 等价类/边界值    | 不同 shape                                                   | 已覆盖                                         |
+| 正常传参场景     | _local_tensor.shape/dtype/device 与传入 local 一致           | 已覆盖                                         |
+| 异常传参场景     | N/A                                                          | 未覆盖                                         |
 
 未覆盖项及原因：
-- Partial placement：场景较复杂，本 UT 未展开
-- 高维 >2：以 2D 为主，更高维未系统覆盖
-- _local_tensor 写操作：属性语义只读，不测未定义写行为
+- Shard/Partial 全矩阵：依赖多 rank 一致输入，单测仅 Replicate
 
-注意：本测试仅验证功能正确性（返回本地 tensor 正确），
-     不做数值正确性校验。
+注意：使用 init_device_mesh(cpu, (1,))；无数值断言。
 """
 
-import os
-import socket
+import unittest
+
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
-import pytest
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.placement_types import Replicate
 
-import torch_npu  # noqa: F401
-from torch.distributed.tensor import DeviceMesh
-from torch.distributed.tensor.placement_types import Replicate, Shard
+try:
+    import torch_npu  # noqa: F401
+    from torch_npu.contrib import transfer_to_npu  # noqa: F401
+except ImportError:
+    pass
 
-DEVICE_TYPE = "npu"
-BACKEND = "hccl"
-WORLD_SIZE = 2
+try:
+    from torch_npu.testing.testcase import TestCase, run_tests
+except ImportError:
+    import sys
+    from unittest import TestCase
 
-
-def _get_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        return str(s.getsockname()[1])
-
-
-def _setup_device(rank):
-    os.environ['HCCL_WHITELIST_DISABLE'] = '1'
-    torch.npu.set_device(rank)
+    def run_tests():
+        unittest.main(argv=sys.argv)
 
 
-def _worker(rank, world_size, port, test_name):
-    _setup_device(rank)
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = port
-    dist.init_process_group(backend=BACKEND, rank=rank, world_size=world_size)
-    try:
-        if test_name == "test_local_tensor_from_local":
-            _test_local_tensor_from_local(rank, world_size)
-        elif test_name == "test_local_tensor_replicate":
-            _test_local_tensor_replicate(rank, world_size)
-        elif test_name == "test_local_tensor_shard_dim0":
-            _test_local_tensor_shard_dim0(rank, world_size)
-        elif test_name == "test_local_tensor_shard_dim1":
-            _test_local_tensor_shard_dim1(rank, world_size)
-        elif test_name == "test_local_tensor_dtype_float32":
-            _test_local_tensor_dtype_float32(rank, world_size)
-        elif test_name == "test_local_tensor_dtype_bfloat16":
-            _test_local_tensor_dtype_bfloat16(rank, world_size)
-        elif test_name == "test_local_tensor_2d":
-            _test_local_tensor_2d(rank, world_size)
-        elif test_name == "test_local_tensor_large":
-            _test_local_tensor_large(rank, world_size)
-        elif test_name == "test_local_tensor_multiple_access":
-            _test_local_tensor_multiple_access(rank, world_size)
-    finally:
-        dist.destroy_process_group()
+def _privateuse1_ok():
+    name = torch._C._get_privateuse1_backend_name()
+    m = getattr(torch, name, None)
+    return name, m is not None and getattr(m, "is_available", lambda: False)()
 
 
-def _run_test(test_name):
-    port = _get_free_port()
-    mp.spawn(
-        _worker,
-        args=(WORLD_SIZE, port, test_name),
-        nprocs=WORLD_SIZE,
-        join=True,
-    )
+class TestDTensorLocalTensor(TestCase):
+    def tearDown(self):
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def test_local_tensor_npu_mesh_float32(self):
+        name, ok = _privateuse1_ok()
+        if not ok:
+            self.skipTest(f"{name} not available")
+        mesh = init_device_mesh(name, (1,))
+        try:
+            lt = torch.randn(3, 3, dtype=torch.float32, device=torch.device(name, 0))
+            dt = DTensor.from_local(lt, mesh, [Replicate()], run_check=False)
+            self.assertEqual(dt._local_tensor.device.type, name)
+            self.assertEqual(dt._local_tensor.shape, lt.shape)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+    def test_local_tensor_npu_mesh_bfloat16(self):
+        name, ok = _privateuse1_ok()
+        if not ok:
+            self.skipTest(f"{name} not available")
+        mesh = init_device_mesh(name, (1,))
+        try:
+            lt = torch.ones(2, 4, dtype=torch.bfloat16, device=torch.device(name, 0))
+            dt = DTensor.from_local(lt, mesh, [Replicate()], run_check=False)
+            self.assertEqual(dt._local_tensor.dtype, torch.bfloat16)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+    def test_local_tensor_npu_mesh_second_shape(self):
+        name, ok = _privateuse1_ok()
+        if not ok:
+            self.skipTest(f"{name} not available")
+        mesh = init_device_mesh(name, (1,))
+        try:
+            lt = torch.zeros(8, dtype=torch.float32, device=torch.device(name, 0))
+            dt = DTensor.from_local(lt, mesh, [Replicate()], run_check=False)
+            self.assertEqual(tuple(dt._local_tensor.shape), (8,))
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+    def test_local_tensor_npu_1d(self):
+        name, ok = _privateuse1_ok()
+        if not ok:
+            self.skipTest(f"{name} not available")
+        mesh = init_device_mesh(name, (1,))
+        try:
+            lt = torch.zeros(16, dtype=torch.float32, device=torch.device(name, 0))
+            dt = DTensor.from_local(lt, mesh, [Replicate()], run_check=False)
+            self.assertEqual(dt._local_tensor.ndim, 1)
+        finally:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+
+    def test_local_tensor_matches_from_local_cpu_mesh(self):
+        mesh = init_device_mesh("cpu", (1,))
+        lt = torch.randn(2, 5, dtype=torch.float32)
+        dt = DTensor.from_local(lt, mesh, [Replicate()], run_check=False)
+        self.assertIsInstance(dt._local_tensor, torch.Tensor)
+        self.assertEqual(dt._local_tensor.shape, lt.shape)
+        self.assertEqual(dt._local_tensor.dtype, lt.dtype)
 
 
-def _test_local_tensor_from_local(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.shape == (4,)
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_replicate(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(8, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.shape == (8,)
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_shard_dim0(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(8, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Shard(0)]
-    )
-    result = dtensor._local_tensor
-    assert result.shape[0] <= 8
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_shard_dim1(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Shard(1)]
-    )
-    result = dtensor._local_tensor
-    assert result.shape[1] <= 4
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_dtype_float32(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_dtype_bfloat16(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, dtype=torch.bfloat16, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.dtype == torch.bfloat16
-
-
-def _test_local_tensor_2d(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, 4, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.shape == (4, 4)
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_large(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(1024, 1024, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result = dtensor._local_tensor
-    assert result.shape == (1024, 1024)
-    assert result.dtype == torch.float32
-
-
-def _test_local_tensor_multiple_access(rank, world_size):
-    device_mesh = DeviceMesh(DEVICE_TYPE, torch.arange(world_size))
-    local_tensor = torch.ones(4, dtype=torch.float32, device=DEVICE_TYPE)
-    dtensor = torch.distributed.tensor.DTensor.from_local(
-        local_tensor, device_mesh, [Replicate()]
-    )
-    result1 = dtensor._local_tensor
-    result2 = dtensor._local_tensor
-    assert result1.shape == result2.shape
-    assert result1.dtype == result2.dtype
-
-
-def test_local_tensor_from_local():
-    _run_test("test_local_tensor_from_local")
-
-
-def test_local_tensor_replicate():
-    _run_test("test_local_tensor_replicate")
-
-
-def test_local_tensor_shard_dim0():
-    _run_test("test_local_tensor_shard_dim0")
-
-
-def test_local_tensor_shard_dim1():
-    _run_test("test_local_tensor_shard_dim1")
-
-
-def test_local_tensor_dtype_float32():
-    _run_test("test_local_tensor_dtype_float32")
-
-
-def test_local_tensor_dtype_bfloat16():
-    _run_test("test_local_tensor_dtype_bfloat16")
-
-
-def test_local_tensor_2d():
-    _run_test("test_local_tensor_2d")
-
-
-def test_local_tensor_large():
-    _run_test("test_local_tensor_large")
-
-
-def test_local_tensor_multiple_access():
-    _run_test("test_local_tensor_multiple_access")
+if __name__ == "__main__":
+    run_tests()

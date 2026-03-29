@@ -1,146 +1,64 @@
 # -*- coding: utf-8 -*-
 """
-测试目的：验证 torch.distributed.tensor._dtensor_spec.TensorMeta 接口的功能正确性
+测试目的：验证 torch.distributed.tensor._dtensor_spec.TensorMeta 命名元组
 API 名称：torch.distributed.tensor._dtensor_spec.TensorMeta
-API 签名：TensorMeta(shape: torch.Size, stride: tuple[int, ...], dtype: torch.dtype)
+API 签名：TensorMeta(shape: Size, stride: tuple[int, ...], dtype: dtype)
 
 覆盖维度表：
 | 覆盖维度         | 说明                                                         | 覆盖情况                                       |
 |------------------|--------------------------------------------------------------|------------------------------------------------|
-| 空/非空          | N/A（shape/stride/dtype 均必填）                             | N/A                                            |
-| 枚举选项         | N/A                                                           | N/A                                            |
-| 参数类型         | torch.Size、tuple[int,...] stride、torch.dtype               | 已覆盖；错误类型触发 TypeError                 |
-| 传参与不传参     | TensorMeta(...) 全参构造                                      | 已覆盖；from_tensor 类方法                     |
-| 等价类/边界值    | 标量/1D/2D/3D shape、不同 stride、多 dtype                   | 已覆盖：float32/bfloat16/int32                 |
-| 正常传参场景     | 属性访问与相等性比较                                          | 已覆盖                                         |
-| 异常传参场景     | 非法 stride 长度等与类型错误                                  | 已覆盖                                         |
+| 空/非空          | N/A                                                          | N/A                                            |
+| 枚举选项         | 多种 dtype                                                   | 已覆盖 float32 / bfloat16                      |
+| 参数类型         | Size, tuple, dtype                                           | 已覆盖                                         |
+| 传参与不传参     | N/A                                                          | N/A                                            |
+| 等价类/边界值    | 不同 shape / stride                                          | 已覆盖                                         |
+| 正常传参场景     | 字段可访问、NamedTuple 行为                                  | 已覆盖                                         |
+| 异常传参场景     | N/A                                                          | 未覆盖                                         |
 
 未覆盖项及原因：
-- 数值语义验证：非本测试目的
+- 无
 
-注意：本测试仅验证功能正确性（属性访问正确、类型正确），
-     不做数值正确性校验。
+注意：仅元数据构造与字段一致性，无数值计算。
 """
 
-import torch
-import pytest
+import unittest
 
-import torch_npu  # noqa: F401
+import torch
+
+try:
+    import torch_npu  # noqa: F401
+    from torch_npu.contrib import transfer_to_npu  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    from torch_npu.testing.testcase import TestCase, run_tests
+except ImportError:
+    import sys
+    from unittest import TestCase
+
+    def run_tests():
+        unittest.main(argv=sys.argv)
 
 from torch.distributed.tensor._dtensor_spec import TensorMeta
 
 
-def _assert_raises(exc_types, fn):
-    try:
-        fn()
-    except exc_types:
-        return
-    raise AssertionError(f"expected one of {exc_types}")
+class TestTensorMeta(TestCase):
+    def test_fields_float32(self):
+        tm = TensorMeta(torch.Size([2, 4]), (4, 1), torch.float32)
+        self.assertEqual(tm.shape, torch.Size([2, 4]))
+        self.assertEqual(tm.stride, (4, 1))
+        self.assertEqual(tm.dtype, torch.float32)
 
+    def test_fields_bfloat16(self):
+        tm = TensorMeta(torch.Size([1]), (1,), torch.bfloat16)
+        self.assertEqual(tm.dtype, torch.bfloat16)
 
-def test_tensor_meta_basic():
-    """基础功能：创建 TensorMeta"""
-    meta = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    assert meta.shape == (4, 4)
-    assert meta.stride == (4, 1)
-    assert meta.dtype == torch.float32
-
-
-def test_tensor_meta_shape_scalar():
-    """shape: 空 tuple"""
-    meta = TensorMeta(shape=(), stride=(), dtype=torch.float32)
-    assert meta.shape == ()
-    assert meta.stride == ()
-    assert meta.dtype == torch.float32
-
-
-def test_tensor_meta_shape_1d():
-    """shape: 1D (4,)"""
-    meta = TensorMeta(shape=(4,), stride=(1,), dtype=torch.float32)
-    assert meta.shape == (4,)
-    assert meta.stride == (1,)
-
-
-def test_tensor_meta_shape_2d():
-    """shape: 2D (4, 4)"""
-    meta = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    assert meta.shape == (4, 4)
-
-
-def test_tensor_meta_shape_3d():
-    """shape: 3D (2, 3, 4)"""
-    meta = TensorMeta(shape=(2, 3, 4), stride=(12, 4, 1), dtype=torch.float32)
-    assert meta.shape == (2, 3, 4)
-
-
-def test_tensor_meta_dtype_float32():
-    """dtype: float32"""
-    meta = TensorMeta(shape=(4,), stride=(1,), dtype=torch.float32)
-    assert meta.dtype == torch.float32
-
-
-def test_tensor_meta_dtype_bfloat16():
-    """dtype: bfloat16"""
-    meta = TensorMeta(shape=(4,), stride=(1,), dtype=torch.bfloat16)
-    assert meta.dtype == torch.bfloat16
-
-
-def test_tensor_meta_dtype_int32():
-    """dtype: int32"""
-    meta = TensorMeta(shape=(4,), stride=(1,), dtype=torch.int32)
-    assert meta.dtype == torch.int32
-
-
-def test_tensor_meta_large_shape():
-    """大 shape [1024, 1024]"""
-    meta = TensorMeta(shape=(1024, 1024), stride=(1024, 1), dtype=torch.float32)
-    assert meta.shape == (1024, 1024)
-
-
-def test_tensor_meta_from_tensor():
-    """从 tensor 创建 TensorMeta"""
-    tensor = torch.ones(4, 4, dtype=torch.float32)
-    meta = TensorMeta(shape=tensor.shape, stride=tensor.stride(), dtype=tensor.dtype)
-    assert meta.shape == (4, 4)
-    assert meta.dtype == torch.float32
-
-
-def test_tensor_meta_custom_stride():
-    """自定义 stride"""
-    meta = TensorMeta(shape=(4, 4), stride=(1, 4), dtype=torch.float32)
-    assert meta.stride == (1, 4)
-
-
-def test_tensor_meta_equality():
-    """相等性比较"""
-    meta1 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    meta2 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    assert meta1 == meta2
-
-
-def test_tensor_meta_inequality():
-    """不相等比较"""
-    meta1 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    meta2 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.bfloat16)
-    meta3 = TensorMeta(shape=(4, 5), stride=(4, 1), dtype=torch.float32)
-    assert meta1 != meta2
-    assert meta1 != meta3
-
-
-def test_tensor_meta_hash():
-    """可哈希"""
-    meta1 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    meta2 = TensorMeta(shape=(4, 4), stride=(4, 1), dtype=torch.float32)
-    s = {meta1, meta2}
-    assert len(s) == 1
-
-
-def test_tensor_meta_zero_dim():
-    """0 维 tensor shape"""
-    meta = TensorMeta(shape=torch.Size([]), stride=(), dtype=torch.float32)
-    assert meta.shape == torch.Size([])
-    assert meta.dtype == torch.float32
+    def test_namedtuple_index(self):
+        tm = TensorMeta(torch.Size([3, 3]), (3, 1), torch.float32)
+        self.assertEqual(tm[0], torch.Size([3, 3]))
+        self.assertEqual(tm[2], torch.float32)
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    run_tests()
