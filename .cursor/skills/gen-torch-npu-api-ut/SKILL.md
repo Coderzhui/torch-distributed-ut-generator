@@ -30,7 +30,7 @@ description: >-
       device_name = torch._C._get_privateuse1_backend_name()
       self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
   ```
-- 多卡用例：对 **≥2 块 NPU** 的测试方法使用 **`@skipIfUnsupportMultiNPU(n)`**（`from torch_npu.testing.common_distributed import skipIfUnsupportMultiNPU`），与 ascend 一致。**`torch.distributed` 下 API** 须先按 [DISTRIBUTED_API_UT.md](DISTRIBUTED_API_UT.md) 判断：除纯 Python 工具类外，**默认使用多卡 HCCL 测试**。
+- 多卡用例：对 **≥2 块 NPU** 的测试方法使用 **`@skipIfUnsupportMultiNPU(n)`**（`from torch_npu.testing.common_distributed import skipIfUnsupportMultiNPU`），与 ascend 一致。**`torch.distributed` 下 API** 须先按 `references/DISTRIBUTED_API_UT.md` 判断：除纯 Python 工具类外，**默认使用多卡 HCCL 测试**。
 - 文件末尾：`if __name__ == "__main__": run_tests()`（无 `torch_npu` 时回退 `unittest.main`，与 `gen-distributed-ut` 技能中模式一致）。
 - 断言：`self.assert*` / `self.assertRaises` / `self.assertRaisesRegex`；**禁止**以逐元素浮点对比做**数值精度**验收（见下文「禁止事项」）。
 - **注释语言**：除文件顶部按模板编写的**头部注释**（简体中文 docstring / 覆盖维度表等）外，**代码中**其余注释（行内注释、`#` 说明、测试方法 docstring 若需编写）**统一使用英文**；避免正文代码块中英混用。
@@ -40,7 +40,8 @@ description: >-
 1. **确认目标 API**：向用户确认要测试的 **torch API 全名**（如 `torch.linalg.vector_norm`、`torch.nn.functional.relu`）。
 2. **查阅 API 签名**：在 `pytorch/torch/` 下定位实现，读取**完整函数/方法签名**、参数列表、默认值与 docstring，列出全部参数。
 3. **查阅 NPU 适配层**：打开 `ascend_pytorch/torch_npu/contrib/transfer_to_npu.py`，确认该 API 是否被 patch、映射关系（如 `cuda→npu`、`nccl→hccl`）及特殊行为。
-4. **查阅现有测试**：优先读 `ascend_pytorch/test/` 中同类或同模块测试；不足时对照 `pytorch/test/`。
+4. **查阅分布式补充规范（如适用）**：如果目标 API 属于 `torch.distributed` 命名空间，**必须同时阅读本 skill 目录下的 `references/DISTRIBUTED_API_UT.md`**，遵循其中的多卡测试策略和路径命名规则。
+5. **查阅现有测试**：优先读 `ascend_pytorch/test/` 中同类或同模块测试；不足时对照 `pytorch/test/`。
 
 ## 文件规范
 
@@ -164,4 +165,4 @@ API 签名：{完整签名}
 
 上述条款为公共基线。
 
-- **若目标 API 属于 `torch.distributed` 命名空间**（集合通信、进程组、分布式工具函数等）：生成 UT 时需额外阅读本目录下的 [**DISTRIBUTED_API_UT.md**](DISTRIBUTED_API_UT.md)。其中要求：**除纯 Python 工具类外，所有分布式 API 默认使用多卡 HCCL 测试**；配合 `@skipIfUnsupportMultiNPU` 装饰器。
+- **若目标 API 属于 `torch.distributed` 命名空间**（集合通信、进程组、分布式工具函数等）：生成 UT 时需额外阅读本 skill 目录下的 `references/DISTRIBUTED_API_UT.md`。其中要求：**除纯 Python 工具类外，所有分布式 API 默认使用多卡 HCCL 测试**；配合 `@skipIfUnsupportMultiNPU` 装饰器。
