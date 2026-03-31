@@ -3,4 +3,4 @@
 	url = https://gitcode.com/Ascend/pytorch.git
 [submodule "pytorch"]
 	path = pytorch
-	url = https://github.com/pytorch/pytorch.git
+	url = file:///home/x50057147/torch-distributed-ut-generator/pytorch
