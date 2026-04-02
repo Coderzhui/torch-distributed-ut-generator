@@ -49,6 +49,57 @@
 
 ---
 
+## device_name 使用规范（分布式测试）
+
+### 单进程测试
+
+```python
+def setUp(self):
+    super().setUp()
+    self.device_name = torch._C._get_privateuse1_backend_name()
+    self.assertEqual(self.device_name, 'npu', f"Expected device 'npu', got '{self.device_name}'")
+
+def test_single_process(self):
+    # 使用 self.device_name 而非硬编码 'npu'
+    tensor = torch.randn(10, device=self.device_name)
+```
+
+### 多进程测试
+
+**关键原则**：多进程回调函数中无法直接访问 `self.device_name`，需要将其作为参数传递。
+
+```python
+@classmethod
+def _worker(cls, rank, world_size, c2p, device_name):  # 接收 device_name 参数
+    # 使用传入的 device_name
+    tensor = torch.randn(10, device=device_name)
+    ...
+
+def test_multiprocess(self):
+    ctx = mp.get_context('spawn')
+    c2p = ctx.Queue()
+    
+    # 将 self.device_name 作为参数传递给子进程
+    p = ctx.Process(
+        target=self._worker,
+        args=(rank, world_size, c2p, self.device_name))
+    p.start()
+```
+
+### 多 rank 设备指定
+
+对于需要指定特定 rank 设备的场景，允许使用 `f'npu:{rank}'` 形式：
+
+```python
+def _worker(cls, rank, world_size, device_name):
+    # 当需要显式指定设备索引时
+    local_device = f'npu:{rank}'
+    torch.npu.set_device(rank)
+    tensor = torch.randn(10, device=local_device)
+```
+
+---
+
 ## 多卡测试模板（HCCL）
 
 ```python
@@ -77,10 +128,10 @@ def _init_dist_process(rank, world_size, fn, backend='hccl'):
         dist.destroy_process_group()
 
 
-def _test_collective_example(rank, world_size):
+def _test_collective_example(rank, world_size, device_name):
     """Test collective operation on each rank."""
-    # Create tensor on current NPU
-    tensor = torch.ones(10, device=f'npu:{rank}')
+    # Create tensor on current NPU using passed device_name
+    tensor = torch.ones(10, device=device_name)
 
     # Perform collective operation
     work = dist.all_reduce(tensor, async_op=True)
@@ -96,8 +147,8 @@ class TestDistributedCollective(TestCase):
 
     def setUp(self):
         super().setUp()
-        device_name = torch._C._get_privateuse1_backend_name()
-        self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
+        self.device_name = torch._C._get_privateuse1_backend_name()
+        self.assertEqual(self.device_name, 'npu', f"Expected device 'npu', got '{self.device_name}'")
 
     @skipIfUnsupportMultiNPU(2)
     def test_all_reduce_multinpu(self):
@@ -105,7 +156,7 @@ class TestDistributedCollective(TestCase):
         world_size = 2
         mp.spawn(
             _init_dist_process,
-            args=(world_size, _test_collective_example),
+            args=(world_size, _test_collective_example, self.device_name),
             nprocs=world_size,
             join=True
         )
@@ -138,12 +189,13 @@ class TestDistributedUtility(TestCase):
 
     def setUp(self):
         super().setUp()
-        device_name = torch._C._get_privateuse1_backend_name()
-        self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
+        self.device_name = torch._C._get_privateuse1_backend_name()
+        self.assertEqual(self.device_name, 'npu', f"Expected device 'npu', got '{self.device_name}'")
 
     def test_utility_function(self):
         """Test pure Python utility without distributed initialization."""
         # Direct function call without init_process_group
+        # Use self.device_name instead of hardcoded 'npu'
         result = torch.distributed.utils._get_root_modules(...)
         self.assertIsNotNone(result)
 
@@ -160,10 +212,10 @@ if __name__ == "__main__":
 - [ ] 已按上文 **「多卡测试策略」** 判断测试方式：
   - 纯工具类 → 单进程测试
   - 其他分布式 API → **多卡 HCCL 测试**
-- [ ] **设备检查放在 `setUp` 中**：使用 `self.assertEqual(device_name, 'npu')` 检查，**不是 skip**
-- [ ] 多卡测试使用 `mp.spawn` 创建多进程
+- [ ] **设备检查放在 `setUp` 中**：使用 `self.device_name = torch._C._get_privateuse1_backend_name()` 保存设备名，并用 `self.assertEqual(self.device_name, 'npu')` 检查，**不是 skip**
+- [ ] 多卡测试使用 `mp.spawn` 创建多进程，并将 `self.device_name` 作为参数传递给子进程函数
 - [ ] 多卡测试初始化 `init_process_group(backend='hccl', ...)`
-- [ ] 多卡测试使用 `torch.npu.set_device(rank)` 绑定设备
+- [ ] 多卡测试使用 `torch.npu.set_device(rank)` 绑定设备，在子进程中使用传入的 `device_name` 参数创建张量
 - [ ] 凡 **需要 ≥2 卡** 的测试方法均带 `@skipIfUnsupportMultiNPU(n)`
 - [ ] 仅改动 `test/`；头部中文 docstring 与覆盖表已按实填写
 - [ ] unittest + TestCase；无 pytest；无数值精度断言
