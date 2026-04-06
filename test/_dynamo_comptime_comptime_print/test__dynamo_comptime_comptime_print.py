@@ -49,12 +49,12 @@ class TestDynamoComptimePrint(TestCase):
 
     def setUp(self):
         super().setUp()
-        device_name = torch._C._get_privateuse1_backend_name()
-        self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
+        self.device_name = torch._C._get_privateuse1_backend_name()
+        self.assertEqual(self.device_name, 'npu', f"Expected device 'npu', got '{self.device_name}'")
 
     def test_comptime_print_npu_tensor(self):
         """Test comptime.print with NPU tensor and verify output contains device info."""
-        tensor = torch.ones(1, device='npu')
+        tensor = torch.ones(1, device=self.device_name)
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
             result = torch._dynamo.comptime.comptime.print(tensor)
@@ -147,7 +147,7 @@ class TestDynamoComptimePrint(TestCase):
 
     def test_comptime_print_empty_tensor(self):
         """Test comptime.print with empty tensor."""
-        tensor = torch.tensor([], device='npu')
+        tensor = torch.tensor([], device=self.device_name)
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
             result = torch._dynamo.comptime.comptime.print(tensor)
@@ -156,7 +156,7 @@ class TestDynamoComptimePrint(TestCase):
 
     def test_comptime_print_single_element_tensor(self):
         """Test comptime.print with single element tensor."""
-        tensor = torch.tensor(5.0, device='npu')
+        tensor = torch.tensor(5.0, device=self.device_name)
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
             result = torch._dynamo.comptime.comptime.print(tensor)

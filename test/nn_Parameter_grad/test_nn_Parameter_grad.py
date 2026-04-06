@@ -46,18 +46,19 @@ class TestParameterGrad(TestCase):
 
     def setUp(self):
         super().setUp()
-        device_name = torch._C._get_privateuse1_backend_name()
-        self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
+        self.device_name = torch._C._get_privateuse1_backend_name()
+        self.assertEqual(self.device_name, 'npu', f"Expected device 'npu', got '{self.device_name}'")
+        self.device = torch.device(self.device_name, 0)
 
     def test_grad_initially_none(self):
         """Test that grad is None before backward."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(3, 3, dtype=torch.float32, device=d))
         self.assertIsNone(param.grad)
 
     def test_grad_after_backward(self):
         """Test grad exists and has correct shape after backward."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(3, 3, dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
@@ -68,7 +69,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_requires_grad_false(self):
         """Test grad is None when requires_grad=False."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(2, 2, dtype=torch.float32, device=d), requires_grad=False)
         self.assertIsNone(param.grad)
         # backward should raise error on non-leaf or no-grad tensor
@@ -78,7 +79,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_accumulation(self):
         """Test grad accumulation on multiple backward calls."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.ones(2, 2, dtype=torch.float32, device=d))
         loss1 = param.sum()
         loss1.backward()
@@ -92,7 +93,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_zero(self):
         """Test grad can be zeroed."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(3, dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
@@ -102,7 +103,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_different_dtypes(self):
         """Test grad with different parameter dtypes."""
-        d = torch.device('npu', 0)
+        d = self.device
         dtypes = [torch.float32, torch.float16]
         for dtype in dtypes:
             param = nn.Parameter(torch.randn(2, 2, dtype=dtype, device=d))
@@ -113,7 +114,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_empty_tensor(self):
         """Test grad with empty parameter."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.tensor([], dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
@@ -122,7 +123,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_scalar_tensor(self):
         """Test grad with scalar (0-dim) parameter."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.tensor(5.0, dtype=torch.float32, device=d))
         loss = param * 2
         loss.backward()
@@ -131,7 +132,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_1d_tensor(self):
         """Test grad with 1D parameter."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(10, dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
@@ -139,7 +140,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_3d_tensor(self):
         """Test grad with 3D parameter."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(2, 3, 4, dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
@@ -147,7 +148,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_in_optimizer_context(self):
         """Test grad in a simple optimizer-like context."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(3, 3, dtype=torch.float32, device=d))
         optimizer = torch.optim.SGD([param], lr=0.01)
         loss = param.sum()
@@ -161,7 +162,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_after_optimizer_step(self):
         """Test grad behavior through optimizer cycle."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.ones(2, 2, dtype=torch.float32, device=d))
         optimizer = torch.optim.SGD([param], lr=0.1)
         # First iteration
@@ -180,7 +181,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_detached_tensor(self):
         """Test grad with detached tensor operations."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(2, 2, dtype=torch.float32, device=d))
         detached = param.detach()
         # Detached tensor is not a Parameter, no grad tracking
@@ -192,7 +193,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_complex_computation(self):
         """Test grad with complex computation graph."""
-        d = torch.device('npu', 0)
+        d = self.device
         param1 = nn.Parameter(torch.randn(2, 3, dtype=torch.float32, device=d))
         param2 = nn.Parameter(torch.randn(3, 2, dtype=torch.float32, device=d))
         output = torch.matmul(param1, param2)
@@ -205,7 +206,7 @@ class TestParameterGrad(TestCase):
 
     def test_grad_is_contiguous(self):
         """Test grad tensor properties (contiguous, etc.)."""
-        d = torch.device('npu', 0)
+        d = self.device
         param = nn.Parameter(torch.randn(3, 3, dtype=torch.float32, device=d))
         loss = param.sum()
         loss.backward()
