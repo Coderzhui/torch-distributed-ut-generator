@@ -23,12 +23,7 @@ API 签名：grad: Optional[Tensor] (attribute, inherited from Tensor)
 
 import torch
 import torch.nn as nn
-
-try:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-except ImportError:
-    pass
+import torch_npu
 
 try:
     from torch_npu.testing.testcase import TestCase, run_tests

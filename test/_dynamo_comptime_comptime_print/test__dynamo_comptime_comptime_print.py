@@ -26,12 +26,7 @@ import contextlib
 import io
 
 import torch
-
-try:
-    import torch_npu  # noqa: F401
-    from torch_npu.contrib import transfer_to_npu  # noqa: F401
-except ImportError:
-    pass
+import torch_npu
 
 try:
     from torch_npu.testing.testcase import TestCase, run_tests
