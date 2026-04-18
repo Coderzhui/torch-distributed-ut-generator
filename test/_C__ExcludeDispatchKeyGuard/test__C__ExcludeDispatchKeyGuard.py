@@ -64,7 +64,7 @@ class TestCExcludeDispatchKeyGuard(TestCase):
 
     def test_exclude_dispatch_key_guard_invalid_type(self):
         """Creating with invalid type raises TypeError."""
-        with self.assertRaises((TypeError, RuntimeError)):
+        with self.assertRaises(TypeError):
             torch._C._ExcludeDispatchKeyGuard("invalid")
 
 

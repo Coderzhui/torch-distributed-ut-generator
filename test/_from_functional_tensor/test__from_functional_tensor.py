@@ -76,7 +76,7 @@ class TestFromFunctionalTensor(TestCase):
 
     def test_from_functional_tensor_invalid_type(self):
         """Call with non-tensor raises TypeError."""
-        with self.assertRaises((TypeError, RuntimeError)):
+        with self.assertRaises(TypeError):
             torch._from_functional_tensor("not a tensor")
 
 

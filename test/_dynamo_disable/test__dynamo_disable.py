@@ -63,7 +63,7 @@ class TestDynamoDisable(TestCase):
 
     def test_disable_invalid_target(self):
         """Decorating a non-callable raises AssertionError."""
-        with self.assertRaises((TypeError, RuntimeError, AssertionError)):
+        with self.assertRaises(AssertionError):
             torch._dynamo.disable("not callable")
 
 

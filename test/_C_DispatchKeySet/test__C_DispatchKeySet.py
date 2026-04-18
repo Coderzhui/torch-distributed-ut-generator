@@ -70,7 +70,7 @@ class TestCDispatchKeySet(TestCase):
 
     def test_dispatch_key_set_invalid_type(self):
         """Creating with invalid type raises TypeError."""
-        with self.assertRaises((TypeError, RuntimeError)):
+        with self.assertRaises(RuntimeError):
             torch._C.DispatchKeySet("invalid")
 
 

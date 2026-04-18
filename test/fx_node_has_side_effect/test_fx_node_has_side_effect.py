@@ -60,7 +60,9 @@ class TestFxNodeHasSideEffect(TestCase):
         self.assertEqual(fn(1), 2)
 
     def test_has_side_effect_non_callable(self):
-        """Non-callable object is accepted by current implementation."""
+        """Non-callable object is accepted by current implementation (no type check)."""
+        # Note: current implementation does not enforce callable type;
+        # it transparently returns the input. This test documents that behavior.
         result = torch.fx.node.has_side_effect("not callable")
         self.assertEqual(result, "not callable")
 

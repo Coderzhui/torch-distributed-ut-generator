@@ -55,6 +55,7 @@ class TestExecutionEngineQueueCallback(TestCase):
         loss = x.sum()
         x.register_hook(lambda grad: torch.autograd.Variable._execution_engine.queue_callback(cb))
         loss.backward()
+        self.assertTrue(callback_called[0], "Callback was not executed during backward")
 
     def test_queue_callback_lambda(self):
         """Queue a lambda callback during backward pass does not raise."""

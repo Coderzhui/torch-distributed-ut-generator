@@ -44,16 +44,14 @@ class TestPrimsCommonMakeContiguousStridesFor(TestCase):
         self.assertEqual(device_name, 'npu', f"Expected device 'npu', got '{device_name}'")
 
     def test_make_contiguous_strides_for_basic(self):
-        """Basic shape returns tuple of correct length."""
+        """Basic shape returns correct row-major contiguous strides."""
         result = torch._prims_common.make_contiguous_strides_for((2, 3, 4))
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
+        self.assertTrue(result == (12, 4, 1), f"Expected (12, 4, 1), got {result}")
 
     def test_make_contiguous_strides_for_row_major_false(self):
-        """row_major=False returns tuple of correct length."""
+        """row_major=False returns correct non-row-major contiguous strides."""
         result = torch._prims_common.make_contiguous_strides_for((2, 3, 4), row_major=False)
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
+        self.assertTrue(result == (12, 1, 3), f"Expected (12, 1, 3), got {result}")
 
     def test_make_contiguous_strides_for_empty_shape(self):
         """Empty shape returns empty tuple."""
@@ -75,7 +73,7 @@ class TestPrimsCommonMakeContiguousStridesFor(TestCase):
 
     def test_make_contiguous_strides_for_invalid_type(self):
         """Invalid shape type raises TypeError."""
-        with self.assertRaises((TypeError, RuntimeError, ValueError)):
+        with self.assertRaises(TypeError):
             torch._prims_common.make_contiguous_strides_for("invalid")
 
 

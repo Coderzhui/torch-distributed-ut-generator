@@ -76,6 +76,8 @@ class TestForeachCopy(TestCase):
         result = torch._foreach_copy_(dst, src)
         self.assertIsInstance(result, (tuple, list))
         self.assertEqual(result[0].device.type, self.device_name)
+        self.assertEqual(result[0].shape, src[0].shape)
+        self.assertEqual(result[0].dtype, src[0].dtype)
 
     def test_foreach_copy_invalid_single_tensor(self):
         """Passing a single tensor instead of tuple raises TypeError."""

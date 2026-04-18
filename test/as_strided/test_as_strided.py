@@ -45,11 +45,14 @@ class TestAsStrided(TestCase):
         self.device = torch.device(self.device_name)
 
     def test_as_strided_npu_basic(self):
-        """Basic as_strided on NPU returns correct shape."""
-        x = torch.randn(12, device=self.device)
+        """Basic as_strided on NPU returns correct shape and data."""
+        x = torch.arange(12, dtype=torch.float32, device=self.device)
         result = torch.as_strided(x, (3, 4), (4, 1))
         self.assertEqual(result.shape, torch.Size([3, 4]))
         self.assertEqual(result.device.type, self.device_name)
+        self.assertEqual(result[1][2].item(), 6.0)
+        self.assertEqual(result[0][0].item(), 0.0)
+        self.assertEqual(result[2][3].item(), 11.0)
 
     def test_as_strided_npu_with_storage_offset(self):
         """as_strided with storage_offset on NPU."""

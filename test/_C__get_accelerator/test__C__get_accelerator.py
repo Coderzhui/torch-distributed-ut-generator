@@ -63,7 +63,7 @@ class TestCGetAccelerator(TestCase):
 
     def test_get_accelerator_invalid_type(self):
         """Call with non-bool type raises TypeError."""
-        with self.assertRaises((TypeError, RuntimeError)):
+        with self.assertRaises(TypeError):
             torch._C._get_accelerator("invalid")
 
 
